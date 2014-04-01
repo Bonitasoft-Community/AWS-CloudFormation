@@ -1,0 +1,151 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+
+  "Description" : "Sample template to bring up a Bonita BPM instance using a community Bundle based on H2 database.",
+
+  "Parameters" : {
+    "KeyName": {
+      "Description" : "Name of an existing EC2 KeyPair to enable SSH access to the instances",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "255",
+      "AllowedPattern" : "[\\x20-\\x7E]*",
+      "ConstraintDescription" : "can contain only ASCII characters."
+    },
+    "InstanceType" : {
+      "Description" : "WebServer EC2 instance type",
+      "Type" : "String",
+      "Default" : "m1.small",
+      "AllowedValues" : [ "m1.small","m1.medium","m1.large","m1.xlarge","m2.xlarge","m2.2xlarge","m2.4xlarge","m3.xlarge","m3.2xlarge","c1.medium","c1.xlarge" ],
+      "ConstraintDescription" : "must be a valid EC2 instance type."
+    },
+    "SSHLocation" : {
+      "Description" : "The IP address range that can be used to SSH to the EC2 instances",
+      "Type": "String",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default": "0.0.0.0/0",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+    },
+    "BonitaVersion" : {
+      "Description" : "The Bonita BPM version",
+      "Type": "String",
+      "MinLength": "5",
+      "MaxLength": "6",
+      "Default": "6.2.5",
+      "AllowedPattern": "(\\d{1,1})\\.(\\d{1,1})\\.(\\d{1,2})",
+      "ConstraintDescription": "must be an exisiting Bonita BPM version of the form x.y.z"
+    },
+    "TenantLogin": {
+      "Description" : "Username for tenant access",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "16",
+      "Default" : "tenantadmin",
+      "AllowedPattern" : "[a-zA-Z][a-zA-Z0-9]*",
+      "ConstraintDescription" : "must begin with a letter and contain only alphanumeric characters."
+    },
+    "TenantPassword": {
+      "NoEcho": "true",
+      "Description" : "Password for tenant access",
+      "Type": "String",
+      "MinLength": "8",
+      "MaxLength": "41",
+      "AllowedPattern" : "[a-zA-Z0-9]*",
+      "ConstraintDescription" : "TenantPassword must contain only alphanumeric characters with at least 8 characters."
+    },
+    "PlatformLogin": {
+      "Description" : "Username for platform access",
+      "Type": "String",
+      "MinLength": "1",
+      "MaxLength": "16",
+      "Default" : "platformadmin",
+      "AllowedPattern" : "[a-zA-Z][a-zA-Z0-9]*",
+      "ConstraintDescription" : "must begin with a letter and contain only alphanumeric characters."
+    },
+    "PlatformPassword": {
+      "NoEcho": "true",
+      "Description" : "Password for platform access",
+      "Type": "String",
+      "MinLength": "8",
+      "MaxLength": "41",
+      "AllowedPattern" : "[a-zA-Z0-9]*",
+      "ConstraintDescription" : "PlatformPassword must contain only alphanumeric characters with at least 8 characters."
+    }
+  },
+
+  "Mappings" : {
+    "AWSInstanceType2Arch" : {
+      "m1.small"    : { "Arch" : "64" },
+      "m1.medium"   : { "Arch" : "64" },
+      "m1.large"    : { "Arch" : "64" },
+      "m1.xlarge"   : { "Arch" : "64" },
+      "m2.xlarge"   : { "Arch" : "64" },
+      "m2.2xlarge"  : { "Arch" : "64" },
+      "m2.4xlarge"  : { "Arch" : "64" },
+      "m3.xlarge"   : { "Arch" : "64" },
+      "m3.2xlarge"  : { "Arch" : "64" },
+      "c1.medium"   : { "Arch" : "64" },
+      "c1.xlarge"   : { "Arch" : "64" }
+    },
+
+    "AWSRegionArch2AMI" : {
+      "us-east-1"      : { "64" : "ami-59a4a230" },
+      "us-west-1"      : { "64" : "ami-660c3023" },
+      "us-west-2"      : { "64" : "ami-fa9cf1ca" },
+      "eu-west-1"      : { "64" : "ami-808675f7" },
+      "sa-east-1"      : { "64" : "ami-1da90a00" },
+      "ap-southeast-1" : { "64" : "ami-3c39686e" },
+      "ap-southeast-2" : { "64" : "ami-09f26b33" },
+      "ap-northeast-1" : { "64" : "ami-f381f5f2" }
+    }
+  },
+
+  "Resources" : { 
+    "WebServer": {
+      "Type": "AWS::EC2::Instance",
+      "Properties": {
+        "ImageId" : { "Fn::FindInMap" : [ "AWSRegionArch2AMI", { "Ref" : "AWS::Region" },
+                          { "Fn::FindInMap" : [ "AWSInstanceType2Arch", { "Ref" : "InstanceType" }, "Arch" ] } ] },
+        "InstanceType"   : { "Ref" : "InstanceType" },
+        "SecurityGroups" : [ {"Ref" : "WebServerSecurityGroup"} ],
+        "KeyName"        : { "Ref" : "KeyName" },
+        "UserData"       : { "Fn::Base64" : { "Fn::Join" : ["", [
+		"#cloud-config\n",
+        	"apt_update: true\n",
+	        "apt_upgrade: true\n",
+		"packages:\n",
+		"- openjdk-7-jre-headless\n",
+		"- unzip\n",
+		"runcmd:\n",
+		"- wget http://download.forge.ow2.org/bonita/BonitaBPMCommunity-", { "Ref" : "BonitaVersion" },"-Tomcat-6.0.37.zip -O /opt/bonitaBPM.zip \n",
+		"- cd /opt/; unzip -q bonitaBPM.zip; DIR=`ls -d BonitaBPM*`; ln -s $DIR BonitaBPM;",
+		"- sed -i -e 's!platformAdminUsername=.*!platformAdminUsername=", { "Ref" : "PlatformLogin" },"!' -e 's!platformAdminPassword=.*!platformAdminPassword=", { "Ref" : "PlatformPassword" },"!' /opt/BonitaBPM/bonita/server/platform/conf/bonita-platform.properties && sed -i -e 's!platform.username=.*!platform.username=", { "Ref" : "PlatformLogin" },"!' -e 's!platform.password=.*!platform.password=", { "Ref" : "PlatformPassword" },"!' /opt/BonitaBPM/bonita/client/platform/conf/platform-tenant-config.properties\n",
+		"- sed -i -e 's!userName = .*!userName = ", { "Ref" : "TenantLogin" },"!' -e 's!userPassword = .*!userPassword = ", { "Ref" : "TenantPassword" },"!' /opt/BonitaBPM/bonita/server/platform/tenant-template/conf/bonita-server.properties && sed -i -e 's!platform.tenant.default.username=.*!platform.tenant.default.username=", { "Ref" : "TenantLogin" },"!' -e 's!platform.tenant.default.password=.*!platform.tenant.default.password=", { "Ref" : "TenantPassword" },"!' /opt/BonitaBPM/bonita/client/platform/conf/platform-tenant-config.properties\n",
+		"- /opt/BonitaBPM/bin/startup.sh\n"
+        ]]}}
+      }
+    },
+
+    "WebServerSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "Enable HTTP access via port 8080",
+        "SecurityGroupIngress" : [
+          {"IpProtocol" : "tcp", "FromPort" : "8080", "ToPort" : "8080", "CidrIp" : "0.0.0.0/0"},
+          {"IpProtocol" : "tcp", "FromPort" : "22", "ToPort" : "22", "CidrIp" : { "Ref" : "SSHLocation"}}
+        ]
+      }
+    }
+
+  },
+
+  "Outputs" : {
+    "WebsiteURL" : {
+      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "WebServer", "PublicDnsName" ]},
+                  ":8080/bonita"]] },
+      "Description" : "URL of the Bonita BPM Portal"
+    }
+  }
+}
