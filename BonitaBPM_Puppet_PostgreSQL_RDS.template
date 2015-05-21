@@ -1,0 +1,505 @@
+{
+  "AWSTemplateFormatVersion" : "2010-09-09",
+
+  "Description" : "Template to bring up using Puppet a Bonita BPM instance running on a RDS PostgreSQL database.",
+
+  "Parameters" : {
+    "RestoreFromSnapshots": {
+      "Default" : "false",
+      "Description" : "Specifies if the deployment will use snapshots previously done as source",
+      "Type" : "String",
+      "AllowedValues" : [ "true", "false" ],
+      "ConstraintDescription" : "RestoreFromSnapshots must be true or false"
+    },
+    "BonitaHomeSnapshotId": {
+      "Default": "",
+      "Description" : "The snapshot from which to create the new volume used by the bonita home.",
+      "Type": "String"
+    },
+    "KeyName": {
+      "Description" : "Name of an existing EC2 KeyPair to enable SSH access to the instances",
+      "Type": "AWS::EC2::KeyPair::KeyName"
+    },
+    "SSHLocation" : {
+      "Description" : "The IP address range that can be used to SSH to the EC2 instances",
+      "Type": "String",
+      "MinLength": "9",
+      "MaxLength": "18",
+      "Default": "0.0.0.0/0",
+      "AllowedPattern": "(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})\\.(\\d{1,3})/(\\d{1,2})",
+      "ConstraintDescription": "must be a valid IP CIDR range of the form x.x.x.x/x."
+    },
+    "InstanceType" : {
+      "Description" : "WebServer EC2 instance type",
+      "Type" : "String",
+      "Default" : "t2.medium",
+      "AllowedValues" : [ "t2.small", "t2.medium", "m1.small","m1.medium","m1.large","m1.xlarge","m2.xlarge","m2.2xlarge","m2.4xlarge", "m3.medium", "m3.large", "m3.xlarge","m3.2xlarge","c1.medium","c1.xlarge" ],
+      "ConstraintDescription" : "must be a valid EC2 instance type."
+    },
+    "InstanceStorage" : {
+      "Default": "20",
+      "Description" : "The size of the EC2 root device (Gb)",
+      "Type": "Number",
+      "MinValue": "8",
+      "MaxValue": "1024",
+      "ConstraintDescription" : "must be between 8 and 1024Gb."
+    },
+    "DBClass" : {
+      "Default" : "db.m1.small",
+      "Description" : "Database instance class",
+      "Type" : "String",
+      "AllowedValues" : [ "db.m1.small", "db.m1.large", "db.m3.medium", "db.m3.large", "db.m1.xlarge", "db.m2.xlarge", "db.m2.2xlarge", "db.m2.4xlarge" ],
+      "ConstraintDescription" : "must select a valid database instance type."
+    },
+    "DBMultiAZ" : {
+      "Default" : "true",
+      "Description" : "Specifies if the DB instance is a multiple Availability Zone deployment",
+      "Type" : "String",
+      "AllowedValues" : [ "true", "false" ],
+      "ConstraintDescription" : "DBMultiAZ must be true or false"
+    },
+    "DBAllocatedStorage" : {
+      "Default": "20",
+      "Description" : "The size of the database (Gb)",
+      "Type": "Number",
+      "MinValue": "5",
+      "MaxValue": "1024",
+      "ConstraintDescription" : "must be between 5 and 1024Gb."
+    },
+    "DBSnapshotIdentifier" : {
+      "Default": "",
+      "Description" : "The identifier for the DB snapshot to restore from.",
+      "Type": "String"
+    },
+    "PuppetUrl": {
+      "Description" : "The url towards the Puppet module",
+      "Type": "String",
+      "Default" : "https://github.com/Bonitasoft-Community/puppet-bonita-bpm/archive"
+    },
+    "PuppetVersion": {
+      "Description" : "The version of the Puppet module",
+      "Type": "String",
+      "Default" : "1.2.1"
+    },
+    "TomcatVersionFromBonitaBundle" : {
+      "Description" : "The Bonita BPM version",
+      "Type": "String",
+      "MinLength": "5",
+      "MaxLength": "6",
+      "Default": "7.0.55",
+      "AllowedPattern": "(\\d{1,1})\\.(\\d{1,1})\\.(\\d{1,2})",
+      "ConstraintDescription": "must be an exisiting Tomcat version of the form x.y.z"
+    },
+    "BonitaVersion" : {
+      "Description" : "The Bonita BPM version",
+      "Type": "String",
+      "MinLength": "5",
+      "MaxLength": "6",
+      "Default": "6.5.2",
+      "AllowedPattern": "(\\d{1,1})\\.(\\d{1,1})\\.(\\d{1,2})",
+      "ConstraintDescription": "must be an exisiting Bonita BPM version of the form x.y.z"
+    },
+     "BonitaEdition" : {
+      "Description" : "The Bonita BPM edition",
+      "Type": "String",
+      "Default": "community",
+      "AllowedValues" : [ "community" ],
+      "ConstraintDescription": "teamwork, efficiency and performance not yet supported"
+    },
+    "BonitaDbName": {
+	  "Description" : "The BonitaBPM database name",
+      "Type": "String",
+      "MinLength": "4",
+      "Default" : "bonitadb",
+      "AllowedPattern" : "[a-zA-Z0-9]*",
+      "ConstraintDescription" : "must contain only alphanumeric characters."
+    },
+    "BonitaDbUsername": {
+      "Default": "bonita",
+      "Description" : "The BonitaBPM database account username",
+      "Type": "String",
+      "MinLength": "4",
+      "AllowedPattern" : "[a-zA-Z0-9]*",
+      "ConstraintDescription" : "must contain only alphanumeric characters."
+    },
+    "BonitaDbPassword": {
+      "NoEcho": "true",
+      "Description" : "The BonitaBPM database account password",
+      "Type": "String",
+      "MinLength": "8"
+    },
+    "BonitaDSminIdle": {
+      "Type" : "Number",
+      "Default" : "5"
+    },
+    "BonitaDSmaxActive": {
+      "Type" : "Number",
+      "Default" : "31",
+      "Description" : "MaxThreads+BonitaMaximumPoolSize+BonitaQuartzThreadCount+3(Quartz best practices)"
+    },
+    "BonitaSequenceManagerDSminIdle": {
+      "Type" : "Number",
+      "Default" : "1"
+    },
+    "BonitaSequenceManagerDSmaxActive": {
+      "Type" : "Number",
+      "Default" : "3"
+    },
+    "TenantLogin": {
+      "Description" : "Username for tenant access",
+      "Type": "String",
+      "MinLength": "4",
+      "Default" : "tenantadmin"
+    },
+    "TenantPassword": {
+      "NoEcho": "true",
+      "Description" : "Password for tenant access",
+      "Type": "String",
+      "MinLength": "8"
+    },
+    "PlatformLogin": {
+      "Description" : "Username for platform access",
+      "Type": "String",
+      "MinLength": "4",
+      "Default" : "platformadmin"
+    },
+    "PlatformPassword": {
+      "NoEcho": "true",
+      "Description" : "Password for platform access",
+      "Type": "String",
+      "MinLength": "8"
+    },
+    "JavaOpts": {
+      "Type": "String",
+      "Default" : "-Djava.awt.headless=true -XX:+UseConcMarkSweepGC -Dfile.encoding=UTF-8 -Xshare:auto -Xms512m -Xmx512m -XX:MaxPermSize=128m -XX:+HeapDumpOnOutOfMemoryError"
+    },
+   "MaxThreads": {
+      "Type": "Number",
+      "Default" : "150"
+    },
+   "BonitaCorePoolSize": {
+      "Type": "Number",
+      "Default" : "8"
+    },
+    "BonitaMaximumPoolSize": {
+      "Type": "Number",
+      "Default" : "8"
+    },
+    "BonitaQuartzThreadCount": {
+      "Type": "Number",
+      "Default" : "5"
+    },
+    "LogsLogin": {
+      "Description" : "Username to access Bonita Logs",
+      "Type": "String",
+      "Default" : "logsuser"      
+    },
+    "LogsPassword": {
+      "NoEcho": "true",
+      "Description" : "Password to access Bonita Logs",
+      "Type": "String"
+    }
+  },
+  
+  "Conditions": {
+    "RestoreFromSnapshots": { "Fn::Equals" : [ { "Ref" : "RestoreFromSnapshots" }, "true" ] }
+  },
+
+  "Mappings" : {
+	"AWSInstanceType2Arch" : {
+      "t2.small"    : { "Arch" : "64HVM" },
+      "t2.medium"   : { "Arch" : "64HVM" },
+      "m1.small"    : { "Arch" : "64" },
+      "m1.medium"   : { "Arch" : "64" },
+      "m1.large"    : { "Arch" : "64" },
+      "m1.xlarge"   : { "Arch" : "64" },
+      "m2.xlarge"   : { "Arch" : "64" },
+      "m2.2xlarge"  : { "Arch" : "64" },
+      "m2.4xlarge"  : { "Arch" : "64" },
+      "m3.medium"   : { "Arch" : "64HVM" },
+      "m3.large"    : { "Arch" : "64HVM" },
+      "m3.xlarge"   : { "Arch" : "64HVM" },
+      "m3.2xlarge"  : { "Arch" : "64HVM" },
+      "c1.medium"   : { "Arch" : "64" },
+      "c1.xlarge"   : { "Arch" : "64" }
+    }, 
+	  
+    "AWSRegionArch2AMI" : {
+      "us-east-1"      : { "64" : "ami-d85e75b0", "64HVM" : "ami-d05e75b8" , "TestAz" : "us-east-1a" },
+      "us-west-1"      : { "64" : "ami-d16a8b95", "64HVM" : "ami-df6a8b9b" , "TestAz" : "us-west-1a"  },
+      "us-west-2"      : { "64" : "ami-6989a659", "64HVM" : "ami-5189a661" , "TestAz" : "us-west-2a"  },
+      "eu-west-1"      : { "64" : "ami-5da23a2a", "64HVM" : "ami-47a23a30" , "TestAz" : "eu-west-1a"  },
+      "sa-east-1"      : { "64" : "ami-55883348", "64HVM" : "ami-4d883350" , "TestAz" : "sa-east-1a"  },
+      "ap-southeast-1" : { "64" : "ami-e8f1c1ba", "64HVM" : "ami-96f1c1c4" , "TestAz" : "ap-southeast-1a"  },
+      "ap-southeast-2" : { "64" : "ami-7163104b", "64HVM" : "ami-69631053" , "TestAz" : "ap-southeast-2a"  },
+      "ap-northeast-1" : { "64" : "ami-8d6d9d8d", "64HVM" : "ami-936d9d93" , "TestAz" : "ap-northeast-1a"  }
+    }
+  },
+
+  "Resources" : { 
+    
+    "WebServer": {
+      "Type": "AWS::EC2::Instance",
+      "Metadata" : {
+        "Comment1" : "Configure the EC2 instance to install BonitaBPM",
+
+        "AWS::CloudFormation::Init" : {
+          "config" : {
+            "packages" : {
+              "apt" : {
+                "puppet"                   : [],
+                "unzip"                    : []
+              }
+            },
+            "files" : {
+              "/var/tmp/setup_BonitaBPM.sh" : {
+                "content" : { "Fn::Join" : ["", [
+                  "#!/bin/bash\n",
+                  "#set hostname\n",                  
+                  "server_hostname=", { "Ref" : "AWS::StackName" }, "\n",
+                  "echo $server_hostname > /etc/hostname && sed -i \"s/^127.0.0.1.*\\$/127.0.0.1 ${server_hostname} localhost/\" /etc/hosts && start hostname\n",
+                  "cd /var/tmp/\n",
+                  "wget ",{ "Ref" : "PuppetUrl" },"/v",{ "Ref" : "PuppetVersion" },".tar.gz\n",
+                  "tar -xvzf v",{ "Ref" : "PuppetVersion" },".tar.gz\n",
+                  "mkdir -p puppet/modules\n",
+				  "mv puppet-bonita-bpm-",{ "Ref" : "PuppetVersion" },"/ puppet/modules/bonita_bpm\n",
+                  "edition=", { "Ref" : "BonitaEdition" },"\n",
+                  "version=", { "Ref" : "BonitaVersion" },"\n",
+                  "case $edition in\n",
+                  "        community)\n",
+                  "                wget http://download.forge.ow2.org/bonita/BonitaBPMCommunity-", { "Ref" : "BonitaVersion" },"-Tomcat-", { "Ref" : "TomcatVersionFromBonitaBundle" },".zip\n",
+                  "                unzip BonitaBPMCommunity-",{ "Ref" : "BonitaVersion" },"-Tomcat-", { "Ref" : "TomcatVersionFromBonitaBundle" },".zip\n",
+                  "                cd BonitaBPMCommunity-",{ "Ref" : "BonitaVersion" },"-Tomcat-", { "Ref" : "TomcatVersionFromBonitaBundle" },"\n",
+                  "                tar -czf ../puppet/modules/bonita_bpm/files/archives/BonitaBPM-",{ "Ref" : "BonitaEdition" },"-",{ "Ref" : "BonitaVersion" },".tgz bonita/ lib/bonita/ webapps/bonita.war\n",
+                  "                ;;\n",                  
+                  "        teamwork|efficiency|performance)\n",
+                  "                echo TODO\n",
+                  "                ;;\n",
+                  "esac\n",
+                  "puppet apply --logdest=/var/tmp/puppet.log --modulepath=/var/tmp/puppet/modules /var/tmp/init.pp\n"
+                  ]]},
+                "mode"  : "000700",
+                "owner" : "root",
+                "group" : "root"
+              },
+              "/var/tmp/init.pp" : {
+                "content" : { "Fn::Join" : ["", [
+					"# Warning : don't use tab below because control characters must be escaped inside JSON string literals!\n",
+					"File { ignore => ['.svn', '.git', 'CVS' ] }\n",
+					"Exec { path => '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' }\n",
+					"  # describe node\n",
+					"  # Bonita BPM\n",
+					"  # mandatory parameters\n",
+					"  $bonita_bpm_version                          = '", { "Ref" : "BonitaVersion" },"'\n",
+					"  $bonita_bpm_edition                          = '", { "Ref" : "BonitaEdition" },"'\n",
+					"  $bonita_bpm_archive                          = 'BonitaBPM-",{ "Ref" : "BonitaEdition" },"-",{ "Ref" : "BonitaVersion" },".tgz'\n",
+					"  # database parameters used for bonitaDS and bonitaSequenceManagerDS\n",
+					"  $bonita_bpm_db_vendor                        = 'postgres'\n",
+					"  $bonita_bpm_db_name                          = '", { "Ref" : "BonitaDbName" },"'\n",
+					"  $bonita_bpm_db_user                          = '", { "Ref" : "BonitaDbUsername" },"'\n",
+					"  $bonita_bpm_db_pass                          = '", { "Ref" : "BonitaDbPassword" },"'\n",
+					"  $bonita_bpm_db_host                          = '", {"Fn::GetAtt": ["DBInstance","Endpoint.Address"]},"'\n",
+					"  $bonita_bpm_db_port                          = '", {"Fn::GetAtt": ["DBInstance","Endpoint.Port"]},"'\n",
+					"  $bonita_bpm_bonitaDS_minIdle                 = '", { "Ref" : "BonitaDSminIdle" },"'\n",
+					"  $bonita_bpm_bonitaDS_maxActive               = '", { "Ref" : "BonitaDSmaxActive" },"'\n",
+					"  $bonita_bpm_bonitaSequenceManagerDS_minIdle   = '", { "Ref" : "BonitaSequenceManagerDSminIdle" },"'\n",
+					"  $bonita_bpm_bonitaSequenceManagerDS_maxActive = '", { "Ref" : "BonitaSequenceManagerDSmaxActive" },"'\n",
+					"  # platform credentials\n",
+					"  $bonita_bpm_platform_admin_user               = '", { "Ref" : "PlatformLogin" },"'\n",
+					"  $bonita_bpm_platform_admin_pass               = '", { "Ref" : "PlatformPassword" },"'\n",
+					"  # jvm and tomcat tuning\n",
+					"  $bonita_bpm_java_opts                         = '", { "Ref" : "JavaOpts" },"'\n",
+					"  $bonita_bpm_maxThreads                        = '", { "Ref" : "MaxThreads" },"'\n",
+					"  $bonita_bpm_server_info                       = 'Apache Tomcat'\n",
+					"  # bonita workers configuration\n",
+					"  $bonita_bpm_corePoolSize                      = '", { "Ref" : "BonitaCorePoolSize" },"'\n",
+					"  $bonita_bpm_maximumPoolSize                   = '", { "Ref" : "BonitaMaximumPoolSize" },"'\n",
+					"  # quartz configuration\n",
+					"  $bonita_bpm_quartz_threadCount                = '", { "Ref" : "BonitaQuartzThreadCount" },"'\n",
+					"  # tenants configuration\n",
+  					"  $bonita_bpm_tenants = [ \n",
+  					"              { id        => '1',\n",
+  					"                user      => '", { "Ref" : "TenantLogin" },"',\n",
+  					"                pass      => '", { "Ref" : "TenantPassword" },"',\n",
+					"              }\n",
+					"  ]\n",					
+					"\n",								
+					"  $bonita_bpm_logs_user                         = '", { "Ref" : "LogsLogin" },"'\n",
+					"  $bonita_bpm_logs_pass                         = '", { "Ref" : "LogsPassword" },"'\n",
+					"  # deploy Bonita BPM\n",
+					"  include bonita_bpm\n",
+					"  # deploy ROOT application\n",
+					"  include bonita_bpm::root_application\n",
+					"  # deploy LOGS application\n",
+					"  include bonita_bpm::logs_application\n",
+					"\n"
+                  ]]},
+                "mode"  : "000700",
+                "owner" : "root",
+                "group" : "root"
+              }
+            }
+          }
+        }
+      },
+      "Properties": {
+        "AvailabilityZone" : { "Fn::FindInMap" : [ "AWSRegionArch2AMI", { "Ref" : "AWS::Region" }, "TestAz" ]},
+        "ImageId" : { "Fn::FindInMap" : [ "AWSRegionArch2AMI", { "Ref" : "AWS::Region" },
+                          { "Fn::FindInMap" : [ "AWSInstanceType2Arch", { "Ref" : "InstanceType" }, "Arch" ] } ] },
+        "InstanceType"   : { "Ref" : "InstanceType" },
+        "Tags" : [ {"Key" : "Name", "Value" : { "Ref" : "AWS::StackName" }} ],
+        "SecurityGroups" : [ {"Ref" : "WebServerSecurityGroup"} ],
+        "KeyName"        : { "Ref" : "KeyName" },
+		"BlockDeviceMappings" : [
+		   {
+			  "DeviceName" : "/dev/sda1",
+			  "Ebs" : {
+					"VolumeSize" : {"Ref" : "InstanceStorage"},
+					"VolumeType" : "gp2"
+			  }
+		   }
+		],    
+        "Volumes" : [
+			{ "VolumeId" : { "Ref" : "BonitaHomeVolume" }, "Device" : "/dev/sdh" }
+        ],
+        "UserData"       : { "Fn::Base64" : { "Fn::Join" : ["", [
+    	"#!/bin/bash -ex\n",
+                "apt-get update\n",
+                "apt-get -y install python-setuptools python-pip\n",
+                "pip install awscli\n",
+                "wget -P /root https://s3.amazonaws.com/cloudformation-examples/aws-cfn-bootstrap-latest.tar.gz","\n",
+                "mkdir -p /root/aws-cfn-bootstrap-latest","\n",
+                "tar xvfz /root/aws-cfn-bootstrap-latest.tar.gz --strip-components=1 -C /root/aws-cfn-bootstrap-latest","\n",
+                "easy_install /root/aws-cfn-bootstrap-latest/","\n",
+
+                "# Helper function\n",
+                "function error_exit\n",
+                "{\n",
+                "  /usr/local/bin/cfn-signal -e 0 -r \"$1\" '", { "Ref" : "WaitHandle" }, "'\n",
+                "  exit 1\n",
+                "}\n",
+  
+                "# Install puppet, unzip and setup script\n",
+                "/usr/local/bin/cfn-init -v -s ", { "Ref" : "AWS::StackName" }, " -r WebServer ",
+                " --region ", { "Ref" : "AWS::Region" }, " || error_exit 'Failed to run cfn-init'\n",
+                                
+                "# Waiting for EBS mounts to become available\n",
+                "while [ ! -e /dev/xvdh ]; do echo waiting for /dev/xvdh to attach; sleep 10; done;\n",
+                "# Create filesystem and mount point info\n",
+                "if [ '", { "Ref" : "RestoreFromSnapshots" }, "' = 'false' ]\n",
+                "then \n",
+                "  # launch mke2fs only on new installs\n",
+                "  mke2fs -t ext4 -F /dev/xvdh > /var/tmp/mke2fs.log 2>&1\n",
+                "fi \n",
+                "mkdir -p /opt/bonita_home\n",
+                "echo '/dev/xvdh /opt/bonita_home ext4 defaults,auto,noatime,noexec 0 0' | tee -a /etc/fstab\n",
+                "mount /opt/bonita_home > /var/tmp/mount.log 2>&1\n",
+
+                "# Launch setup script in order to install BonitaBPM\n",
+                "/var/tmp/setup_BonitaBPM.sh\n",
+
+                "# All is well so signal success\n",
+                "/usr/local/bin/cfn-signal -e 0 -r \"BonitaBPM setup complete\" '", { "Ref" : "WaitHandle" }, "'\n"
+  
+        ]]}}
+      },
+      "DependsOn" : "DBInstance"
+    },
+
+    "WaitHandle" : {
+      "Type" : "AWS::CloudFormation::WaitConditionHandle"
+    },
+
+    "WaitCondition" : {
+      "Type" : "AWS::CloudFormation::WaitCondition",
+      "DependsOn" : "WebServer",
+      "Properties" : {
+        "Handle" : {"Ref" : "WaitHandle"},
+        "Timeout" : "1800"
+      }
+    },
+    
+	"BonitaDBParameterGroup": {
+		"Type": "AWS::RDS::DBParameterGroup",
+		"Properties" : {
+		"Description" : "DBParameterGroup with max_prepared_transactions = max_connections",
+		"Family" : "postgres9.3",
+		"Parameters" : {"max_prepared_transactions" : "{DBInstanceClassMemory/12582880}"}
+		}
+	},
+    
+    "DBInstance" : {
+      "Type": "AWS::RDS::DBInstance",
+      "Properties": {
+        "DBName"                : {
+									"Fn::If" : [ "RestoreFromSnapshots",
+													{ "Ref" : "AWS::NoValue" },
+													{ "Ref" : "BonitaDbName" }
+												]
+								  },
+        "Engine"                : "Postgres",
+        "EngineVersion"         : "9.3",
+        "DBParameterGroupName"  : {"Ref": "BonitaDBParameterGroup"},
+        "MasterUsername"        : { "Ref" : "BonitaDbUsername" },
+        "DBInstanceClass"       : { "Ref" : "DBClass" },
+        "VPCSecurityGroups"      : [{ "Fn::GetAtt": [ "VPCSecurityGroupForDB", "GroupId" ] }],
+        "AllocatedStorage"      : { "Ref" : "DBAllocatedStorage" },
+        "StorageType"           : "gp2",
+        "MasterUserPassword"    : { "Ref" : "BonitaDbPassword" },
+        "MultiAZ"               : { "Ref" : "DBMultiAZ" },
+        "DBSnapshotIdentifier"  : { "Ref" : "DBSnapshotIdentifier" }
+      }
+    },
+    
+    "VPCSecurityGroupForDB": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "SecurityGroupIngress": {"IpProtocol" : "tcp", "FromPort" : "5432", "ToPort" : "5432", "SourceSecurityGroupName" : { "Ref" : "WebServerSecurityGroup"}},
+        "GroupDescription"      : "Enable Frontend Access"
+      }
+    },
+
+    "WebServerSecurityGroup" : {
+      "Type" : "AWS::EC2::SecurityGroup",
+      "Properties" : {
+        "GroupDescription" : "Enable SSH and HTTP access via port 8080",
+        "SecurityGroupIngress" : [
+          {"IpProtocol" : "tcp", "FromPort" : "22", "ToPort" : "22", "CidrIp" : { "Ref" : "SSHLocation"}},        
+          {"IpProtocol" : "tcp", "FromPort" : "8080", "ToPort" : "8080", "CidrIp" : "0.0.0.0/0"}		  
+        ]
+      }
+    },
+    
+	"BonitaHomeVolume" : {
+		"Type" : "AWS::EC2::Volume",
+		"Properties" : {
+		    "SnapshotId" : {
+							"Fn::If" : [ "RestoreFromSnapshots",
+											{ "Ref" : "BonitaHomeSnapshotId" },
+											{ "Ref" : "AWS::NoValue" }
+										]
+							},
+			"Size" : {
+						"Fn::If" : [ "RestoreFromSnapshots",
+										{ "Ref" : "AWS::NoValue" },
+										"20"
+									]
+					  },
+			"AvailabilityZone" : { "Fn::FindInMap" : [ "AWSRegionArch2AMI", { "Ref" : "AWS::Region" }, "TestAz" ]},
+			"Tags" : [ {
+			"Key" : "Usage", "Value" : "BonitaHome",
+			"Key" : "Name", "Value" : { "Ref" : "AWS::StackName" }
+			} ],
+			"VolumeType" : "gp2"
+		}
+	}
+    
+  },
+
+  "Outputs" : {
+    "WebsiteURL" : {
+      "Value" : { "Fn::Join" : ["", ["http://", { "Fn::GetAtt" : [ "WebServer", "PublicDnsName" ] }, ":8080/bonita"]] }, 
+      "Description" : "URL of the Bonita BPM Portal"
+    }
+  }
+}
